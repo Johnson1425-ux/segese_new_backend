@@ -2,6 +2,7 @@ import express from 'express';
 import Visit from '../models/Visit.js';
 import Prescription from '../models/Prescription.js';
 import { protect, authorize } from '../middleware/auth.js';
+import { checkPaymentEligibility } from '../middleware/paymentEligibility.js';
 import logger from '../utils/logger.js';
 
 const router = express.Router();
@@ -30,9 +31,21 @@ router.get('/', authorize('admin', 'pharmacist'), async (req, res) => {
 });
 
 // Create a new prescription
-router.post('/', authorize('admin', 'doctor'), async (req, res) => {
+// NOW WITH PAYMENT CHECK
+router.post('/', 
+  authorize('admin', 'doctor'),
+  checkPaymentEligibility,
+  async (req, res) => {
     try {
         const { visitId, patient, prescriptionData } = req.body;
+
+        // Verify patient matches the visit
+        if (req.visit && req.visit.patient._id.toString() !== patient.toString()) {
+            return res.status(400).json({
+                status: 'error',
+                message: 'Patient ID does not match the visit'
+            });
+        }
 
         // Create the prescription
         const prescription = await Prescription.create({
@@ -57,6 +70,8 @@ router.post('/', authorize('admin', 'doctor'), async (req, res) => {
         // Populate prescription details for response
         await prescription.populate('patient', 'name');
         await prescription.populate('prescribedBy', 'name');
+
+        logger.info(`Prescription created for patient ${patient} by ${req.user.firstName} ${req.user.lastName}`);
 
         res.status(201).json({
             status: 'success',
